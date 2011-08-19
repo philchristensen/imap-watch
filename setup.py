@@ -25,11 +25,11 @@ def autosetup():
 		entry_points	= {
 			'console_scripts': [
 				'imap-watch = imap_watch.app:main',
-			]
+			],
+			'setuptools.file_finders'	: [
+				'git = setuptools_git:gitlsfiles',
+			],
 		},
-		
-		install_requires = [''.join(x) for x in {
-		}.items()],
 	)
 
 if(__name__ == '__main__'):
