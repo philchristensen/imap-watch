@@ -1,15 +1,25 @@
 #!/usr/bin/env python
 
-import os, os.path, sys
+import os, os.path, sys, logging
 import ConfigParser
-import imaplib, email
+import imaplib, email, smtplib
 import pkg_resources as pkg
+from email import message
 
-notifier = None
-icon_path = pkg.resource_filename('imap_watch', 'mail.png')
+log = logging.getLogger(__name__)
 
-def log(msg):
-	print >>sys.stderr, str(msg)
+FORWARD_TO_EMAIL = 'phil@bubblehouse.org'
+SOURCE_EMAIL = 'devs@freelancersunion.org'
+
+def get_client(section, config):
+	port = config.getint(section, 'port')
+	secure = config.getboolean(section, 'secure')
+	host = config.get(section, 'host')
+	
+	if(secure):
+		return imaplib.IMAP4_SSL(host, port)
+	else:
+		return imaplib.IMAP4(host, port)
 
 def create_sample_config(path):
 	config = ConfigParser.RawConfigParser()
@@ -25,36 +35,29 @@ def create_sample_config(path):
 	with open(path, 'w') as f:
 		config.write(f)
 
-def check_folder(section, config):
-	port = config.getint(section, 'port')
-	secure = config.getboolean(section, 'secure')
+def get_messages_since(section, config):
+	client = get_client(section, config)
 	markseen = config.getboolean(section, 'markseen')
-	host = config.get(section, 'host')
 	username = config.get(section, 'username')
 	password = config.get(section, 'password')
 	mailbox = config.get(section, 'mailbox')
 	
-	if(secure):
-		client = imaplib.IMAP4_SSL(host, port)
-	else:
-		client = imaplib.IMAP4(host, port)
-	
 	status, result = client.login(username, password)
 	#('OK', ['LOGIN completed'])
 	if(status != 'OK'):
-		log(result)
+		log.error(result)
 		return
 	
-	status, result = client.select(mailbox, readonly=not(config.getboolean(section, 'markseen')))
+	status, result = client.select(mailbox, readonly=False)
 	#('OK', ['137'])
 	if(status != 'OK'):
-		log(result)
+		log.error(result)
 		return
 	
-	status, result = client.search(None, '(UNSEEN)')
+	status, result = client.search(None, '(SINCE "30-May-2012")')
 	#('OK', [''])
 	if(status != 'OK'):
-		log(result)
+		log.error(result)
 		return
 	
 	for msg_num in result[0].split():
@@ -63,41 +66,41 @@ def check_folder(section, config):
 		data = client.fetch(msg_num, "RFC822")
 		yield email.message_from_string(data[1][0][1])
 
-def notify(section, config, msg):
-	if(config.get(section, 'growl')):
-		global notifier
-		if not(notifier):
-			import Growl
-			notifier = Growl.GrowlNotifier(
-				applicationName = 'imap-watch',
-				notifications = ['New Message'],
-				defaultNotifications = None,
-				applicationIcon = Growl.Image.imageFromPath(icon_path),
-			)
-			notifier.register()
-		notifier.notify('New Message', msg['from'], msg['subject'], sticky=True)
-	else:
-		print '[%s] %s: %s' % (section, msg['from'], msg['subject'])
-
 def main():
 	config_path = os.path.join(os.getenv('HOME'), '.imap-watch')
 	if not(os.path.exists(config_path)):
 		create_sample_config(config_path)
-		log("A sample config was created in %s. Modify it and try again." % config_path)
+		log.info("A sample config was created in %s. Modify it and try again." % config_path)
 		sys.exit(1)
 	
 	config = ConfigParser.RawConfigParser()
 	config.read(config_path)
 	
-	for section in config.sections():
-		if(config.get(section, 'growl')):
-			try:
-				import Growl
-			except ImportError, e:
-				log(section + ': growl_py >= 0.0.7 is not properly installed.')
-				sys.exit(1)
+	section = 'jira'
+	messages = list(get_messages_since(section, config))
+	username = config.get(section, 'username')
+	password = config.get(section, 'password')
 	
-	for section in config.sections():
-		for msg in check_folder(section, config):
-			notify(section, config, msg)
-
+	smtp = smtplib.SMTP(
+		config.get('smtp', 'host'),
+		config.get('smtp', 'port'),
+		'jawaka.dev.fuwt'
+	)
+	smtp.set_debuglevel(True)
+	
+	for msg in messages:
+		payload = msg.get_payload()
+		forwarded_message = message.Message()
+		forwarded_message.set_payload(payload)
+		for header, value in msg.items():
+			if(header not in ['From', 'To', 'Subject', 'MIME-Version', 'Content-Type', 'Content-Transfer-Encoding']):
+				continue
+			elif(header == 'From'):
+				forwarded_message['From'] = SOURCE_EMAIL
+			elif(header == 'To'):
+				forwarded_message['To'] = FORWARD_TO_EMAIL
+			else:
+				forwarded_message[header] = value
+		smtp.sendmail(SOURCE_EMAIL, [FORWARD_TO_EMAIL], forwarded_message.as_string())
+		break # remove me
+	smtp.quit()
