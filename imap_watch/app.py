@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 
-import os, os.path, sys, logging
+import os, os.path, sys, logging, time, datetime
 import ConfigParser
 import imaplib, email, smtplib
 import pkg_resources as pkg
-from email import message
+from email import message, utils
 
 log = logging.getLogger(__name__)
 
-FORWARD_TO_EMAIL = 'phil@bubblehouse.org'
-SOURCE_EMAIL = 'devs@freelancersunion.org'
+FORWARD_TO_EMAIL = ''
+SOURCE_EMAIL = ''
 
 def get_client(section, config):
 	port = config.getint(section, 'port')
@@ -54,7 +54,7 @@ def get_messages_since(section, config):
 		log.error(result)
 		return
 	
-	status, result = client.search(None, '(SINCE "30-May-2012")')
+	status, result = client.search(None, '(SINCE "20-May-2012")')
 	#('OK', [''])
 	if(status != 'OK'):
 		log.error(result)
@@ -76,8 +76,7 @@ def main():
 	config = ConfigParser.RawConfigParser()
 	config.read(config_path)
 	
-	section = 'jira'
-	messages = list(get_messages_since(section, config))
+	section = 'imap'
 	username = config.get(section, 'username')
 	password = config.get(section, 'password')
 	
@@ -86,12 +85,22 @@ def main():
 		config.get('smtp', 'port'),
 		'jawaka.dev.fuwt'
 	)
-	smtp.set_debuglevel(True)
+	#smtp.set_debuglevel(True)
 	
-	for msg in messages:
+	debug = True
+	for msg in get_messages_since(section, config):
+		date_struct = utils.parsedate_tz(msg["Date"])
+		d = datetime.datetime.fromtimestamp(time.mktime(date_struct[:9]) - (time.timezone + ([0,-1][time.daylight] * 3600) + date_struct[9]))
+		# if not(datetime.datetime(2012, 5, 19, 20, 15) < d < datetime.datetime(2012, 5, 30, 23, 59)):
+		# 	print 'Skipping message from %s: %s' % (msg['Date'], d)
+		# 	continue
+		
 		payload = msg.get_payload()
+		# if(debug):
+		# 	import pdb; pdb.set_trace()
 		forwarded_message = message.Message()
 		forwarded_message.set_payload(payload)
+		forwarded_message.set_charset(msg.get_charset())
 		for header, value in msg.items():
 			if(header not in ['From', 'To', 'Subject', 'MIME-Version', 'Content-Type', 'Content-Transfer-Encoding']):
 				continue
@@ -101,6 +110,6 @@ def main():
 				forwarded_message['To'] = FORWARD_TO_EMAIL
 			else:
 				forwarded_message[header] = value
-		smtp.sendmail(SOURCE_EMAIL, [FORWARD_TO_EMAIL], forwarded_message.as_string())
-		break # remove me
+		print ("Sending message from %(From)s on %(Date)s" % msg) + ' ' + str(d)
+		#smtp.sendmail(SOURCE_EMAIL, [FORWARD_TO_EMAIL], forwarded_message.as_string())
 	smtp.quit()
