@@ -64,7 +64,7 @@ def check_folder(section, config):
 		yield email.message_from_string(data[1][0][1])
 
 def notify(section, config, msg):
-	if(config.get(section, 'growl')):
+	if(config.get(section, 'growl') != 'False'):
 		global notifier
 		if not(notifier):
 			import Growl
@@ -90,7 +90,7 @@ def main():
 	config.read(config_path)
 	
 	for section in config.sections():
-		if(config.get(section, 'growl')):
+		if(config.get(section, 'growl') != 'False'):
 			try:
 				import Growl
 			except ImportError, e:
